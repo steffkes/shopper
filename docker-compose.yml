@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  web:
+    image: caddy:2.4.0-alpine
+    volumes:
+      - ./public:/usr/share/caddy
+    ports:
+      #- 127.0.0.1:6600:80
+      - 0.0.0.0:6600:80
+
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    command: ["lt", "--local-host", "web", "--port", "80"]

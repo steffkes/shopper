@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/bulma@0.9.2/css/bulma.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@fortawesome/fontawesome-free@5.15.3/css/all.min.css"
+    />
+
+    <title>Shopper</title>
+  </head>
+  <body style="padding: 1rem;">
+    <div id="app">
+      <div class="container">
+        <pre>{{ locations }}</pre>
+        <p>Shopper!</p>
+        <canvas
+          style="border: 1px solid #00f;"
+          id="c"
+          width="600"
+          height="400"
+        ></canvas>
+
+        video: <video id="video">Video stream not available.</video><br />
+        canvas: <canvas id="canvas"></canvas><br />
+        <br />
+        <button @click="start_video">Start video</button>
+        <button v-if="video" @click="take_picture">Take photo</button>
+      </div>
+    </div>
+
+    <script type="text/x-template" id="video-component-template"></script>
+
+    <script src="https://unpkg.com/vue@3.0.11/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/axios@0.21.1/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/qs@6.10.1/dist/qs.js"></script>
+    <!--<script src="https://unpkg.com/fabric@4.5.0/dist/fabric.min.js"></script>-->
+    <script src="https://unpkg.com/fabric-browseronly@3.5.0/dist/fabric.min.js"></script>
+    <script src="https://unpkg.com/uuid@8.3.2/dist/umd/uuidv4.min.js"></script>
+
+    <script>
+      const VideoComponent = {
+        template: "#video-component-template",
+        props: ["modelValue", "label"],
+        emits: ["selected"],
+        computed: {
+          image() {
+            return Object.values(this.modelValue.snippet.thumbnails).sort(
+              ({ width: aw }, { width: bw }) => bw - aw
+            )[0].url;
+          },
+        },
+        methods: {
+          selected() {
+            this.$emit("selected", { which: this.modelValue });
+          },
+        },
+      };
+      const CrossObject = fabric.util.createClass(fabric.Object, {
+        objectCaching: false,
+        initialize: function (options) {
+          this.callSuper("initialize", options);
+
+          this.width = 50;
+          this.height = 50;
+
+          this.w1 = this.h2 = 50;
+          this.h1 = this.w2 = 2;
+        },
+        _render: function (ctx) {
+          ctx.fillRect(-this.w1 / 2, -this.h1 / 2, this.w1, this.h1);
+          ctx.fillRect(-this.w2 / 2, -this.h2 / 2, this.w2, this.h2);
+        },
+      });
+
+      const App = {
+        data() {
+          return {
+            video: null,
+            locations: ["schwendi-edeka"],
+            token: null,
+            sirvClientId: "8RtzuAKey4YecOnXfcBcocQCRas",
+            sirvClientSecret:
+              "57qASeaeW9swWTiA36FLGFgz46w6TMzdA2jc5iiFWb8Mwt7VyZ18fYapqFqOS1ItcE79UXmPYY6aTDxGaFmuOA==",
+          };
+        },
+        async mounted() {
+          const token_response = await fetch("https://api.sirv.com/v2/token", {
+            method: "POST",
+            body: JSON.stringify({
+              clientId: this.sirvClientId,
+              clientSecret: this.sirvClientSecret,
+            }),
+            headers: {
+              "content-type": "application/json",
+            },
+          });
+          this.token = (await token_response.json()).token;
+
+          const canvas = new fabric.Canvas("c");
+
+          fabric.Image.fromURL("./images/schwendi-edeka.png", (image) => {
+            image.selectable = false;
+            canvas
+              .add(
+                image
+                  .scaleToWidth(canvas.getWidth())
+                  .scaleToHeight(canvas.getHeight())
+              )
+              .sendToBack(image);
+          });
+
+          const cross = new CrossObject({ top: 100, left: 100, fill: "red" });
+          cross.hasControls = false;
+          canvas.add(cross).bringToFront(cross);
+
+          cross.on("moved", (event) => {
+            const box = event.transform.target.getCoords();
+            const x = box[0]["x"] + (box[2]["x"] - box[0]["x"]) / 2;
+            const y = box[0]["y"] + (box[2]["y"] - box[0]["y"]) / 2;
+
+            console.debug({
+              cross: true,
+              moved: true,
+              event,
+              target: event.transform.target,
+              coords: box,
+              position: { x, y },
+            });
+          });
+        },
+        methods: {
+          start_video() {
+            this.video = document.getElementById("video");
+
+            navigator.mediaDevices
+              .getUserMedia({ video: true, audio: false })
+              .then((stream) => {
+                this.video.srcObject = stream;
+                this.video.play();
+              });
+          },
+
+          async take_picture() {
+            const canvas = document.getElementById("canvas");
+
+            this.video.pause();
+            canvas.height = this.video.videoHeight;
+            canvas.width = this.video.videoWidth;
+
+            var context = canvas.getContext("2d");
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            console.debug({ video: this.video, canvas, context });
+
+            const file_name = "/" + "schwendi-edeka" + "/" + uuidv4() + ".png";
+
+            const file_response = await fetch(
+              "https://api.sirv.com/v2/files/upload?filename=" + file_name,
+              {
+                method: "POST",
+                body: await new Promise((resolve) => canvas.toBlob(resolve)),
+                headers: {
+                  "content-type": "image/png",
+                  authorization: "Bearer " + this.token,
+                },
+              }
+            );
+            console.debug({ file_response });
+
+            const meta_response = await fetch(
+              "https://api.sirv.com/v2/files/meta/description?filename=" +
+                file_name,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  description: JSON.stringify({ x: 127, y: 122 }),
+                }),
+                headers: {
+                  "content-type": "application/json",
+                  authorization: "Bearer " + this.token,
+                },
+              }
+            );
+            console.debug({ meta_response });
+          },
+        },
+      };
+
+      Vue.createApp(App).mount("#app");
+    </script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+version: "3.9"
+services:
+  prettier:
+    image: tmknom/prettier:2.0.4
+    working_dir: /app
+    volumes:
+      - ./:/app
