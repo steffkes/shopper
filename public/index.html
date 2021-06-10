@@ -126,8 +126,47 @@
           this.cross.hasControls = false;
           canvas.add(this.cross).bringToFront(this.cross);
 
+          const files_response = await fetch(
+            "https://api.sirv.com/v2/files/readdir?dirname=/" +
+              this.selectedLocation,
+            {
+              method: "GET",
+              headers: {
+                authorization: "Bearer " + this.token,
+              },
+            }
+          );
+          const files = await files_response.json();
+          for (const file of files.contents) {
+            const meta_response = await fetch(
+              "https://api.sirv.com/v2/files/meta/description?filename=/" +
+                this.selectedLocation +
+                "/" +
+                file.filename,
+              {
+                method: "GET",
+                headers: {
+                  authorization: "Bearer " + this.token,
+                },
+              }
+            );
+
+            const meta = await meta_response.json();
+            const position = JSON.parse(meta.description);
             console.debug({
+              meta_response,
+              position,
             });
+            const radius = 5;
+            const marker = new fabric.Circle({
+              left: position.x - radius / 2,
+              top: position.y - radius / 2,
+              radius,
+              fill: "blue",
+            });
+            marker.selectable = false;
+            canvas.add(marker);
+          }
         },
         methods: {
           start_video() {
