@@ -19,18 +19,36 @@
       <div class="container">
         <pre>{{ locations }}</pre>
         <p>Shopper!</p>
-        <canvas
-          style="border: 1px solid #00f;"
-          id="c"
-          width="600"
-          height="400"
-        ></canvas>
 
-        video: <video id="video">Video stream not available.</video><br />
-        canvas: <canvas id="canvas"></canvas><br />
-        <br />
-        <button @click="start_video">Start video</button>
-        <button v-if="video" @click="take_picture">Take photo</button>
+        <div v-show="state == 'map'">
+          <canvas
+            style="border: 1px solid #f00;"
+            id="cMap"
+            width="600"
+            height="400"
+          ></canvas>
+          <button @click="store_position">Save location</button>
+        </div>
+        
+        <div v-show="state == 'picture'">
+          <canvas id="canvas"></canvas>
+          <button @click="store_picture">Save picture</button>
+          <button @click="start_video">Take another picture</button>
+        </div>
+
+        <div v-show="state == 'video'">
+          <video id="video" @click="take_picture">Video stream not available.</video>
+        </div>
+
+        <div v-show="!state">
+          <canvas
+            style="border: 1px solid #00f;"
+            id="c"
+            width="600"
+            height="400"
+          ></canvas>
+          <button @click="start_video">Take picture</button>
+        </div>
       </div>
     </div>
 
@@ -81,15 +99,24 @@
       const App = {
         data() {
           return {
+            state: null,
+            canvas: null,
+            picture: null,
+            file_name: null,
+            cross: null,
             video: null,
+            selectedLocation: null,
             locations: ["schwendi-edeka"],
             token: null,
+            sirvHost: "https://ultatter.sirv.com",
             sirvClientId: "8RtzuAKey4YecOnXfcBcocQCRas",
             sirvClientSecret:
               "57qASeaeW9swWTiA36FLGFgz46w6TMzdA2jc5iiFWb8Mwt7VyZ18fYapqFqOS1ItcE79UXmPYY6aTDxGaFmuOA==",
           };
         },
         async mounted() {
+          this.selectedLocation = this.locations[0];
+
           const token_response = await fetch("https://api.sirv.com/v2/token", {
             method: "POST",
             body: JSON.stringify({
@@ -102,51 +129,79 @@
           });
           this.token = (await token_response.json()).token;
 
-          const canvas = new fabric.Canvas("c");
+          this.canvas = new fabric.Canvas("c");
 
-          fabric.Image.fromURL("./images/schwendi-edeka.png", (image) => {
-            image.selectable = false;
-            canvas
-              .add(
-                image
-                  .scaleToWidth(canvas.getWidth())
-                  .scaleToHeight(canvas.getHeight())
-              )
-              .sendToBack(image);
-          });
+          fabric.Image.fromURL(
+            "./images/" + this.selectedLocation + ".png",
+            (image) => {
+              image.selectable = false;
+              this.canvas
+                .add(
+                  image
+                    .scaleToWidth(this.canvas.getWidth())
+                    .scaleToHeight(this.canvas.getHeight())
+                )
+                .sendToBack(image);
+            }
+          );
 
-          const cross = new CrossObject({ top: 100, left: 100, fill: "red" });
-          cross.hasControls = false;
-          canvas.add(cross).bringToFront(cross);
+          const files_response = await fetch(
+            "https://api.sirv.com/v2/files/readdir?dirname=/" +
+              this.selectedLocation,
+            {
+              method: "GET",
+              headers: {
+                authorization: "Bearer " + this.token,
+              },
+            }
+          );
+          const files = await files_response.json();
+          for (const file of files.contents) {
+            const meta_response = await fetch(
+              "https://api.sirv.com/v2/files/meta/description?filename=/" +
+                this.selectedLocation +
+                "/" +
+                file.filename,
+              {
+                method: "GET",
+                headers: {
+                  authorization: "Bearer " + this.token,
+                },
+              }
+            );
 
-          cross.on("moved", (event) => {
-            const box = event.transform.target.getCoords();
-            const x = box[0]["x"] + (box[2]["x"] - box[0]["x"]) / 2;
-            const y = box[0]["y"] + (box[2]["y"] - box[0]["y"]) / 2;
-
+            const meta = await meta_response.json();
+            const position = JSON.parse(meta.description);
             console.debug({
-              cross: true,
-              moved: true,
-              event,
-              target: event.transform.target,
-              coords: box,
-              position: { x, y },
+              meta_response,
+              position,
             });
-          });
+            const radius = 5;
+            const marker = new fabric.Circle({
+              left: position.x - radius / 2,
+              top: position.y - radius / 2,
+              radius,
+              fill: "blue",
+            });
+            marker.selectable = false;
+            this.canvas.add(marker);
+          }
         },
         methods: {
           start_video() {
-            this.video = document.getElementById("video");
+            this.state = "video";
 
             navigator.mediaDevices
               .getUserMedia({ video: true, audio: false })
               .then((stream) => {
+                this.video = document.getElementById("video");
                 this.video.srcObject = stream;
                 this.video.play();
               });
           },
 
           async take_picture() {
+            this.state = "picture";
             const canvas = document.getElementById("canvas");
 
             this.video.pause();
@@ -157,14 +212,20 @@
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
             console.debug({ video: this.video, canvas, context });
-
-            const file_name = "/" + "schwendi-edeka" + "/" + uuidv4() + ".png";
+            this.picture = canvas;
+          },
+          async store_picture() {
+            this.state = "map";
+            this.file_name =
+              "/" + this.selectedLocation + "/" + uuidv4() + ".png";
 
             const file_response = await fetch(
-              "https://api.sirv.com/v2/files/upload?filename=" + file_name,
+              "https://api.sirv.com/v2/files/upload?filename=" + this.file_name,
               {
                 method: "POST",
-                body: await new Promise((resolve) => canvas.toBlob(resolve)),
+                body: await new Promise((resolve) =>
+                  this.picture.toBlob(resolve)
+                ),
                 headers: {
                   "content-type": "image/png",
                   authorization: "Bearer " + this.token,
@@ -172,14 +233,41 @@
               }
             );
             console.debug({ file_response });
+            const canvas = new fabric.Canvas("cMap");
+
+            fabric.Image.fromURL(
+              "./images/" + this.selectedLocation + ".png",
+              (image) => {
+                image.selectable = false;
+                canvas
+                  .add(
+                    image
+                      .scaleToWidth(canvas.getWidth())
+                      .scaleToHeight(canvas.getHeight())
+                  )
+                  .sendToBack(image);
+              }
+            );
+
+            this.cross = new CrossObject({ top: 100, left: 100, fill: "red" });
+            this.cross.hasControls = false;
+            canvas.add(this.cross).bringToFront(this.cross);
+          },
+          async store_position() {
+            const box = this.cross.getCoords();
+
+            const position = {
+              x: box[0]["x"] + (box[2]["x"] - box[0]["x"]) / 2,
+              y: box[0]["y"] + (box[2]["y"] - box[0]["y"]) / 2,
+            };
 
             const meta_response = await fetch(
               "https://api.sirv.com/v2/files/meta/description?filename=" +
-                file_name,
+                this.file_name,
               {
                 method: "POST",
                 body: JSON.stringify({
-                  description: JSON.stringify({ x: 127, y: 122 }),
+                  description: JSON.stringify(position),
                 }),
                 headers: {
                   "content-type": "application/json",
@@ -188,6 +276,18 @@
               }
             );
             console.debug({ meta_response });
+
+            const radius = 5;
+            const marker = new fabric.Circle({
+              left: position.x - radius / 2,
+              top: position.y - radius / 2,
+              radius,
+              fill: "blue",
+            });
+            marker.selectable = false;
+            this.canvas.add(marker);
+
+            this.state = null;
           },
         },
       };
